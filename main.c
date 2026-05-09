@@ -32,15 +32,19 @@ void wq_platform_unlock_irqrestore(unsigned long flags)
 volatile unsigned long jiffies = 0;
 
 /* ─── 执行记录，用于验证 FIFO 顺序 ─── */
-static int exec_log[64];
+#define EXEC_LOG_SIZE   8192
+static int exec_log[EXEC_LOG_SIZE];
 static int exec_count = 0;
 
 #define RECORD(id) do {                         \
     int _idx;                                   \
     pthread_mutex_lock(&wq_mutex);              \
-    _idx = exec_count++;                        \
+    _idx = exec_count;                          \
+    if (_idx < EXEC_LOG_SIZE - 1)               \
+        exec_count++;                           \
     pthread_mutex_unlock(&wq_mutex);            \
-    exec_log[_idx] = (id);                      \
+    if (_idx < EXEC_LOG_SIZE)                   \
+        exec_log[_idx] = (id);                  \
 } while (0)
 
 /* ─── 工作项定义 ─── */
@@ -310,7 +314,37 @@ int main(void)
 	else
 		printf("  FAIL: delayed work executed unexpectedly\n");
 
-	/* ── Test 9: 多线程并发压测 ── */
+	/* ── Test 9: 有序链表验证（不同 tick） ── */
+	printf("\nTest 9: Ordered delayed list (ascending tick)\n");
+	exec_count = 0;
+	jiffies = 0;
+	INIT_DELAYED_WORK(&dw1, handler_d1);   // expire at 10
+	INIT_DELAYED_WORK(&dw2, handler_d2);   // expire at 5
+	schedule_delayed_work(&dw1, 10);
+	schedule_delayed_work(&dw2, 5);
+	for (jiffies = 0; jiffies <= 15; jiffies++) {
+		workqueue_tick_handler(system_wq, jiffies);
+		workqueue_run_all(system_wq);
+	}
+	expected[0] = 102; expected[1] = 101;
+	check_order("dw2(5) before dw1(10)", expected, 2);
+
+	/* ── Test 10: 相同 tick FIFO ── */
+	printf("\nTest 10: Same tick FIFO order\n");
+	exec_count = 0;
+	jiffies = 0;
+	INIT_DELAYED_WORK(&dw1, handler_d1);   // expire at 5
+	INIT_DELAYED_WORK(&dw2, handler_d2);   // expire at 5
+	schedule_delayed_work(&dw1, 5);
+	schedule_delayed_work(&dw2, 5);
+	for (jiffies = 0; jiffies <= 10; jiffies++) {
+		workqueue_tick_handler(system_wq, jiffies);
+		workqueue_run_all(system_wq);
+	}
+	expected[0] = 101; expected[1] = 102;
+	check_order("dw1 before dw2 (FIFO)", expected, 2);
+
+	/* ── Test 11: 多线程并发压测 ── */
 	test_concurrent();
 
 	printf("\n========================================\n");

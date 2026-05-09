@@ -96,6 +96,7 @@ bool queue_delayed_work(struct workqueue_struct *wq,
 			struct delayed_work *dwork,
 			unsigned long delay_ticks)
 {
+	struct delayed_work *pos;
 	unsigned long flags;
 
 	flags = wq_lock_irqsave();
@@ -108,7 +109,13 @@ bool queue_delayed_work(struct workqueue_struct *wq,
 	set_bit(WORK_STRUCT_PENDING, &dwork->work.flags);
 	dwork->tick_expire = jiffies + delay_ticks;
 	dwork->wq = wq;
-	list_add_tail(&dwork->work.entry, &wq->delayed_list);
+
+	/* 按 tick_expire 升序插入，相同 tick 排后面（FIFO） */
+	list_for_each_entry(pos, &wq->delayed_list, work.entry) {
+		if (time_after(pos->tick_expire, dwork->tick_expire))
+			break;
+	}
+	list_add_tail(&dwork->work.entry, &pos->work.entry);
 
 	wq_unlock_irqrestore(flags);
 	return true;
@@ -173,14 +180,16 @@ void workqueue_tick_handler(struct workqueue_struct *wq,
 
 	flags = wq_lock_irqsave();
 
+	/* 链表按 tick_expire 升序排列，扫到第一个未到期的就停 */
 	list_for_each_entry_safe(pos, n, &wq->delayed_list, work.entry) {
-		if (time_after_eq(current_tick, pos->tick_expire)) {
-			list_del_init(&pos->work.entry);
-			clear_bit(WORK_STRUCT_PENDING, &pos->work.flags);
-			pos->wq = NULL;
-			list_add_tail(&pos->work.entry, &wq->work_list);
-			set_bit(WORK_STRUCT_PENDING, &pos->work.flags);
-		}
+		if (!time_after_eq(current_tick, pos->tick_expire))
+			break;
+
+		list_del_init(&pos->work.entry);
+		clear_bit(WORK_STRUCT_PENDING, &pos->work.flags);
+		pos->wq = NULL;
+		list_add_tail(&pos->work.entry, &wq->work_list);
+		set_bit(WORK_STRUCT_PENDING, &pos->work.flags);
 	}
 
 	wq_unlock_irqrestore(flags);

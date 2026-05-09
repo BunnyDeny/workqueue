@@ -93,6 +93,8 @@ void TIM_IRQHandler(void)
 }
 ```
 
+> 🔗 **内部机制**：`delayed_list` 是一个**按 `tick_expire` 升序排列**的有序链表。相同 tick 的任务按 **FIFO** 顺序排队。`tick_handler` 只需从头扫描到第一个未到期的节点就停止，不需要遍历全部。
+
 ### 5️⃣ 取消工作
 
 ```c

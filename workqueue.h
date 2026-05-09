@@ -18,6 +18,7 @@
 #define WORK_STRUCT_RUNNING     1
 
 /* 时间比较宏（防回绕） */
+#define time_after(a, b)        ((long)((b) - (a)) < 0)
 #define time_after_eq(a, b)     ((long)((a) - (b)) >= 0)
 
 /* ───── 工作项 ───── */
